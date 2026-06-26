@@ -1,0 +1,483 @@
+// QuoteFlow — Standard Package database schema.
+//
+// This file is a direct, faithful translation of
+// docs/QuoteFlow_Standard_Package_Database_Architecture.md (the single source
+// of truth). 16 entities, row-level multi-tenancy via `organizationId` on every
+// tenant-owned table. Money is always Prisma `Decimal`, never Float. No soft
+// deletes and no AuditLog at this tier — both deliberately excluded.
+//
+// Phase 2.1 hardening (applied while the DB was empty, no architecture change):
+//   - Native `@db.Uuid` for every id / foreign key / polymorphic entityId.
+//   - `organizationId` indexed on QuoteItem and Payment (completes the tenancy
+//     design — those columns exist for indexed single-WHERE scoping).
+//   - Foreign-key indexes added only where they back common queries/joins.
+//   - Quote → QuoteItem set to onDelete: Cascade (owned children).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  OWNER
+  STAFF
+  FIELD
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUOTED
+  WON
+  LOST
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum JobStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum CustomerType {
+  INDIVIDUAL
+  BUSINESS
+}
+
+enum ServiceUnitType {
+  HOUR
+  FLAT
+  UNIT
+  CUSTOM
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK
+  OTHER
+}
+
+enum TaskStatus {
+  OPEN
+  DONE
+}
+
+// Polymorphic target type for Activity / Note / Task. `entityId` is NOT a
+// DB-enforced foreign key — referential integrity here is the application
+// layer's responsibility (documented trade-off, Section 8).
+enum EntityType {
+  LEAD
+  QUOTE
+  JOB
+  CUSTOMER
+  INVOICE
+}
+
+// ---------------------------------------------------------------------------
+// Core tenancy & auth
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  timezone  String
+  currency  String // ISO 4217
+  settings  Json // terminology/branding overrides
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users             User[]
+  customers         Customer[]
+  serviceCategories ServiceCategory[]
+  services          Service[]
+  taxRates          TaxRate[]
+  leadSources       LeadSource[]
+  leads             Lead[]
+  quotes            Quote[]
+  quoteItems        QuoteItem[]
+  jobs              Job[]
+  invoices          Invoice[]
+  payments          Payment[]
+  activities        Activity[]
+  notes             Note[]
+  tasks             Task[]
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  name           String
+  email          String
+  passwordHash   String?
+  role           Role
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  // Back-relations for the many FKs that point at User.
+  assignedLeads  Lead[]
+  createdQuotes  Quote[]    @relation("QuoteCreatedBy")
+  assignedQuotes Quote[]    @relation("QuoteAssignedTo")
+  assignedJobs   Job[]
+  activities     Activity[]
+  authoredNotes  Note[]
+  assignedTasks  Task[]     @relation("TaskAssignedTo")
+  createdTasks   Task[]     @relation("TaskCreatedBy")
+
+  // Scoped, not global: two orgs can each onboard the same email independently.
+  @@unique([organizationId, email])
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Customer module
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  type           CustomerType
+  email          String?
+  phone          String?
+  address        Json? // single field; Standard tier has no billing/shipping split
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  leads    Lead[]
+  quotes   Quote[]
+  jobs     Job[]
+  invoices Invoice[]
+
+  @@index([organizationId])
+  @@index([organizationId, email])
+}
+
+// ---------------------------------------------------------------------------
+// Services / catalog module
+// ---------------------------------------------------------------------------
+
+model ServiceCategory {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  name           String
+  sortOrder      Int
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  services     Service[]
+
+  @@index([organizationId])
+}
+
+model Service {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  categoryId     String?         @db.Uuid
+  name           String
+  description    String?
+  sku            String?
+  unitType       ServiceUnitType
+  price          Decimal         @db.Decimal(10, 2)
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  category     ServiceCategory? @relation(fields: [categoryId], references: [id])
+  quoteItems   QuoteItem[]
+
+  @@unique([organizationId, sku])
+  @@index([organizationId, isActive])
+  @@index([categoryId])
+}
+
+model TaxRate {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  name           String
+  rate           Decimal  @db.Decimal(5, 2)
+  isDefault      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  quoteItems   QuoteItem[]
+
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Leads & pipeline module
+// ---------------------------------------------------------------------------
+
+model LeadSource {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  name           String
+  costPerLead    Decimal? @db.Decimal(10, 2)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  leads        Lead[]
+
+  @@index([organizationId])
+}
+
+model Lead {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  name           String
+  email          String?
+  phone          String
+  sourceId       String?    @db.Uuid
+  status         LeadStatus @default(NEW)
+  lostReason     String? // drives loss-pattern reporting
+  assignedToId   String?    @db.Uuid
+  customerId     String?    @db.Uuid
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  source       LeadSource?  @relation(fields: [sourceId], references: [id])
+  assignedTo   User?        @relation(fields: [assignedToId], references: [id])
+  customer     Customer?    @relation(fields: [customerId], references: [id])
+  quotes       Quote[]
+
+  @@index([organizationId, status])
+  @@index([assignedToId])
+  @@index([sourceId])
+  @@index([customerId])
+}
+
+// ---------------------------------------------------------------------------
+// Quotes module
+// ---------------------------------------------------------------------------
+
+model Quote {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  quoteNumber    String // sequential, human-facing
+  leadId         String?       @db.Uuid
+  customerId     String        @db.Uuid // required
+  status         QuoteStatus   @default(DRAFT)
+  version        Int           @default(1)
+  parentQuoteId  String?       @db.Uuid // revision chain — self relation
+  discountType   DiscountType?
+  discountValue  Decimal?      @db.Decimal(10, 2)
+  subtotal       Decimal       @db.Decimal(10, 2)
+  taxAmount      Decimal       @db.Decimal(10, 2)
+  total          Decimal       @db.Decimal(10, 2)
+  currency       String
+  issueDate      DateTime?
+  expiryDate     DateTime?
+  sentAt         DateTime?
+  viewedAt       DateTime?
+  acceptedAt     DateTime?
+  declinedAt     DateTime?
+  createdById    String        @db.Uuid
+  assignedToId   String        @db.Uuid
+  notes          String?       @db.Text
+  terms          String?       @db.Text
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  lead         Lead?        @relation(fields: [leadId], references: [id])
+  customer     Customer     @relation(fields: [customerId], references: [id])
+  parent       Quote?       @relation("QuoteRevisions", fields: [parentQuoteId], references: [id])
+  revisions    Quote[]      @relation("QuoteRevisions")
+  createdBy    User         @relation("QuoteCreatedBy", fields: [createdById], references: [id])
+  assignedTo   User         @relation("QuoteAssignedTo", fields: [assignedToId], references: [id])
+  items        QuoteItem[]
+  job          Job?
+
+  @@unique([organizationId, quoteNumber])
+  @@index([organizationId, status])
+  @@index([customerId])
+  @@index([leadId])
+  @@index([parentQuoteId])
+  @@index([assignedToId])
+}
+
+model QuoteItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @db.Uuid
+  quoteId        String  @db.Uuid
+  serviceId      String? @db.Uuid // null = ad-hoc custom line
+  description    String
+  quantity       Decimal @db.Decimal(10, 2)
+  unitPrice      Decimal @db.Decimal(10, 2)
+  lineTotal      Decimal @db.Decimal(10, 2)
+  taxRateId      String? @db.Uuid
+  sortOrder      Int
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  quote        Quote        @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  service      Service?     @relation(fields: [serviceId], references: [id])
+  taxRate      TaxRate?     @relation(fields: [taxRateId], references: [id])
+
+  @@index([organizationId])
+  @@index([quoteId])
+}
+
+// ---------------------------------------------------------------------------
+// Jobs & billing module
+// ---------------------------------------------------------------------------
+
+model Job {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  quoteId        String    @unique @db.Uuid // one job per accepted quote
+  customerId     String    @db.Uuid
+  assignedToId   String?   @db.Uuid
+  status         JobStatus @default(SCHEDULED)
+  scheduledDate  DateTime?
+  completedAt    DateTime?
+  notes          String?   @db.Text
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  quote        Quote        @relation(fields: [quoteId], references: [id])
+  customer     Customer     @relation(fields: [customerId], references: [id])
+  assignedTo   User?        @relation(fields: [assignedToId], references: [id])
+  invoices     Invoice[]
+
+  @@index([organizationId, status])
+  @@index([assignedToId])
+  @@index([customerId])
+}
+
+model Invoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  jobId          String        @db.Uuid // intentionally NOT unique — deposit/progress/final
+  customerId     String        @db.Uuid
+  invoiceNumber  String
+  amount         Decimal       @db.Decimal(10, 2)
+  paidAmount     Decimal       @db.Decimal(10, 2)
+  status         InvoiceStatus @default(UNPAID)
+  dueDate        DateTime?
+  issuedAt       DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  job          Job          @relation(fields: [jobId], references: [id])
+  customer     Customer     @relation(fields: [customerId], references: [id])
+  payments     Payment[]
+
+  @@unique([organizationId, invoiceNumber])
+  @@index([organizationId, status])
+  @@index([jobId])
+  @@index([customerId])
+}
+
+model Payment {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  invoiceId      String        @db.Uuid
+  amount         Decimal       @db.Decimal(10, 2)
+  method         PaymentMethod
+  reference      String?
+  paidAt         DateTime
+  createdAt      DateTime      @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  invoice      Invoice      @relation(fields: [invoiceId], references: [id])
+
+  @@index([organizationId])
+  @@index([invoiceId])
+}
+
+// ---------------------------------------------------------------------------
+// Cross-cutting (polymorphic — entityId is not a DB-enforced FK)
+// ---------------------------------------------------------------------------
+
+model Activity {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  entityType     EntityType
+  entityId       String     @db.Uuid
+  type           String
+  message        String?
+  createdById    String     @db.Uuid
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  createdBy    User         @relation(fields: [createdById], references: [id])
+
+  @@index([organizationId, entityType, entityId])
+}
+
+model Note {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  entityType     EntityType
+  entityId       String     @db.Uuid
+  content        String     @db.Text
+  createdById    String     @db.Uuid
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  createdBy    User         @relation(fields: [createdById], references: [id])
+
+  @@index([organizationId, entityType, entityId])
+}
+
+model Task {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @db.Uuid
+  entityType     EntityType? // nullable — general tasks allowed
+  entityId       String?     @db.Uuid
+  title          String
+  dueDate        DateTime?
+  status         TaskStatus  @default(OPEN)
+  assignedToId   String      @db.Uuid
+  createdById    String      @db.Uuid
+  createdAt      DateTime    @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  assignedTo   User         @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
+  createdBy    User         @relation("TaskCreatedBy", fields: [createdById], references: [id])
+
+  @@index([organizationId])
+  @@index([assignedToId])
+}
