@@ -3,6 +3,7 @@ import Link from "next/link";
 import { KeyRound, Users } from "lucide-react";
 
 import { DashboardNotices } from "@/components/auth/DashboardNotices";
+import { PageLayout } from "@/features/layout/components/PageLayout";
 import { requireSession } from "@/features/auth/queries";
 
 export const metadata: Metadata = { title: "Dashboard" };
@@ -31,7 +32,7 @@ export default async function DashboardPage({
   const { error } = await searchParams;
 
   return (
-    <div className="space-y-8">
+    <PageLayout className="space-y-8">
       <DashboardNotices error={firstParam(error)} />
 
       <div className="space-y-1">
@@ -64,6 +65,6 @@ export default async function DashboardPage({
           </Link>
         )}
       </nav>
-    </div>
+    </PageLayout>
   );
 }
