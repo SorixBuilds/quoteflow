@@ -55,7 +55,9 @@ export function userHasRole(
  * Assert an authenticated session whose role is permitted. Redirects with the
  * approved insufficient-role pattern (§11.3) when the role does not qualify.
  */
-export async function requireRole(allowed: readonly Role[]): Promise<SessionUser> {
+export async function requireRole(
+  allowed: readonly Role[],
+): Promise<SessionUser> {
   const user = await requireSession();
   if (!userHasRole(user, allowed)) {
     redirect("/dashboard?error=insufficient-role");

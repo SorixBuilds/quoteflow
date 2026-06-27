@@ -8,3 +8,5 @@ process.env.DATABASE_URL ??=
   "postgresql://test:test@localhost:5432/test?sslmode=disable";
 process.env.AUTH_SECRET ??= "test-secret-not-used-for-real-sessions";
 process.env.NEXT_PUBLIC_APP_URL ??= "http://localhost:3000";
+// Keep bcrypt fast under test — real algorithm, just a low work factor.
+process.env.BCRYPT_COST_FACTOR ??= "4";

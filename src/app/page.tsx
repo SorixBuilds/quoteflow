@@ -1,52 +1,27 @@
-import { CheckCircle2, Workflow } from "lucide-react";
+import { redirect } from "next/navigation";
 
-import { Button } from "@/components/ui/button";
-import { siteConfig } from "@/config/site";
+import { db } from "@/lib/db";
+import { getCurrentUser } from "@/features/auth/queries";
 
-const foundationChecklist = [
-  "Next.js (App Router) + TypeScript",
-  "Tailwind CSS v4 with QuoteFlow design tokens",
-  "ESLint + Prettier + Vitest",
-  "Scalable feature-sliced folder structure",
-];
+// Routes on live DB + session state every request — never statically cached.
+export const dynamic = "force-dynamic";
 
-export default function Home() {
-  return (
-    <main className="flex flex-1 items-center justify-center px-6 py-16">
-      <div className="bg-card w-full max-w-xl rounded-xl border p-8 shadow-sm">
-        <div className="bg-primary text-primary-foreground flex size-12 items-center justify-center rounded-lg">
-          <Workflow className="size-6" />
-        </div>
-
-        <h1 className="text-foreground mt-6 text-2xl font-semibold tracking-tight">
-          {siteConfig.name}
-        </h1>
-        <p className="text-muted-foreground mt-2 text-sm">
-          {siteConfig.description}
-        </p>
-
-        <div className="bg-muted/60 mt-6 rounded-lg p-4">
-          <p className="text-foreground text-sm font-medium">
-            Phase 1 · Project foundation ready
-          </p>
-          <ul className="mt-3 space-y-2">
-            {foundationChecklist.map((item) => (
-              <li
-                key={item}
-                className="text-muted-foreground flex items-center gap-2 text-sm"
-              >
-                <CheckCircle2 className="text-success size-4" />
-                {item}
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="mt-6 flex gap-3">
-          <Button variant="cta">Build the pipeline</Button>
-          <Button variant="outline">View docs</Button>
-        </div>
-      </div>
-    </main>
-  );
+/**
+ * Application entry point (§12.4 step 2). Routes the visitor by deployment and
+ * session state:
+ *   - empty database  → /setup (one-time bootstrap)
+ *   - authenticated   → /dashboard
+ *   - otherwise       → /login
+ *
+ * This needs the Organization count, which is why the decision lives here in a
+ * server component rather than in middleware (which never queries the DB, §11.4).
+ */
+export default async function RootPage() {
+  if ((await db.organization.count()) === 0) {
+    redirect("/setup");
+  }
+  if (await getCurrentUser()) {
+    redirect("/dashboard");
+  }
+  redirect("/login");
 }

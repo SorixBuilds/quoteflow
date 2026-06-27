@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import type { Role } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
@@ -21,6 +22,83 @@ import { loginSchema } from "@/features/auth/schema";
 
 /** 7-day absolute session lifetime with rolling renewal (§8.3). */
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+
+/** Minimal, non-sensitive user projection returned on a successful login. */
+export type AuthorizedUser = {
+  id: string;
+  organizationId: string;
+  role: Role;
+  isActive: boolean;
+  name: string;
+  email: string;
+};
+
+/**
+ * Verify submitted credentials against the existing `User` table (§6.1).
+ * Extracted from the provider so this security-critical logic is unit-testable.
+ *
+ * Every failure branch returns `null` with the SAME outcome and runs a bcrypt
+ * comparison first, so unknown-email, wrong-password, inactive-account, and
+ * no-password-set are indistinguishable by message or by timing (§9.7, §15
+ * user-enumeration prevention).
+ */
+export async function authorizeCredentials(
+  credentials: unknown,
+): Promise<AuthorizedUser | null> {
+  const parsed = loginSchema.safeParse(credentials);
+  if (!parsed.success) {
+    const rawPassword = (credentials as { password?: unknown })?.password;
+    await runDummyComparison(
+      typeof rawPassword === "string" ? rawPassword : "",
+    );
+    return null;
+  }
+
+  const { email, password } = parsed.data;
+
+  // Email is unique per (organizationId, email), not globally (§27 addendum).
+  // For the delivered single-org deployment there is exactly one match;
+  // `orderBy` keeps multi-org/demo mode deterministic.
+  const user = await db.user.findFirst({
+    where: { email: { equals: email, mode: "insensitive" } },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (!user || !user.passwordHash) {
+    await runDummyComparison(password);
+    return null;
+  }
+
+  if (!user.isActive) {
+    await runDummyComparison(password);
+    return null;
+  }
+
+  const passwordMatches = await verifyPassword(password, user.passwordHash);
+  if (!passwordMatches) {
+    return null;
+  }
+
+  // Best-effort: record the login timestamp. A failure here must not block an
+  // otherwise-valid login.
+  try {
+    await db.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+  } catch {
+    // ignore — non-critical bookkeeping
+  }
+
+  return {
+    id: user.id,
+    organizationId: user.organizationId,
+    role: user.role,
+    isActive: user.isActive,
+    name: user.name,
+    email: user.email,
+  };
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   // Required when not running on Vercel's inferred host (§14: NEXT_PUBLIC_APP_URL).
@@ -56,70 +134,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      /**
-       * Verify credentials against the existing `User` table (§6.1).
-       * Every failure branch returns `null` with the SAME generic outcome and
-       * runs a bcrypt comparison first, so unknown-email, wrong-password,
-       * inactive-account, and no-password-set are indistinguishable to a caller
-       * by message or by timing (§9.7, §15 user-enumeration prevention).
-       */
-      authorize: async (credentials) => {
-        const parsed = loginSchema.safeParse(credentials);
-        if (!parsed.success) {
-          await runDummyComparison(
-            typeof credentials?.password === "string"
-              ? credentials.password
-              : "",
-          );
-          return null;
-        }
-
-        const { email, password } = parsed.data;
-
-        // Email is unique per (organizationId, email), not globally (§27
-        // addendum). For the delivered single-org deployment there is exactly
-        // one match; `orderBy` keeps multi-org/demo mode deterministic.
-        const user = await db.user.findFirst({
-          where: { email: { equals: email, mode: "insensitive" } },
-          orderBy: { createdAt: "asc" },
-        });
-
-        if (!user || !user.passwordHash) {
-          await runDummyComparison(password);
-          return null;
-        }
-
-        if (!user.isActive) {
-          await runDummyComparison(password);
-          return null;
-        }
-
-        const passwordMatches = await verifyPassword(password, user.passwordHash);
-        if (!passwordMatches) {
-          return null;
-        }
-
-        // Best-effort: record the login timestamp. A failure here must not
-        // block an otherwise-valid login.
-        try {
-          await db.user.update({
-            where: { id: user.id },
-            data: { lastLoginAt: new Date() },
-          });
-        } catch {
-          // ignore — non-critical bookkeeping
-        }
-
-        // Minimal, non-sensitive projection (§6.1 step 4f, §7.3).
-        return {
-          id: user.id,
-          organizationId: user.organizationId,
-          role: user.role,
-          isActive: user.isActive,
-          name: user.name,
-          email: user.email,
-        };
-      },
+      authorize: (credentials) => authorizeCredentials(credentials),
     }),
   ],
 

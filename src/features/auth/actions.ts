@@ -69,7 +69,7 @@ function slugify(value: string): string {
 async function ensureUniqueSlug(base: string): Promise<string> {
   let candidate = base;
   let suffix = 1;
-  // eslint-disable-next-line no-await-in-loop -- bounded, low-volume bootstrap path
+  // Bounded, low-volume path (bootstrap / occasional registration).
   while (await db.organization.findUnique({ where: { slug: candidate } })) {
     suffix += 1;
     candidate = `${base}-${suffix}`;
@@ -123,10 +123,15 @@ async function provisionOrgAndOwner(input: {
 
 // --- bootstrap (§12.4) ------------------------------------------------------
 
-export async function bootstrapOrganization(input: unknown): Promise<ActionResult<null>> {
+export async function bootstrapOrganization(
+  input: unknown,
+): Promise<ActionResult<null>> {
   const parsed = setupSchema.safeParse(input);
   if (!parsed.success) {
-    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
   }
   const data = parsed.data;
 
@@ -142,7 +147,10 @@ export async function bootstrapOrganization(input: unknown): Promise<ActionResul
     data.email,
   ]).safeParse(data.password);
   if (!contextual.success) {
-    return { success: false, error: contextual.error.issues[0]?.message ?? "Weak password" };
+    return {
+      success: false,
+      error: contextual.error.issues[0]?.message ?? "Weak password",
+    };
   }
 
   const { organizationId, ownerId } = await provisionOrgAndOwner(data);
@@ -167,16 +175,24 @@ export async function bootstrapOrganization(input: unknown): Promise<ActionResul
 
 // --- public registration (§12.3, flag-gated) --------------------------------
 
-export async function registerOrganization(input: unknown): Promise<ActionResult<null>> {
+export async function registerOrganization(
+  input: unknown,
+): Promise<ActionResult<null>> {
   // Server-side enforcement of the flag — never just hidden in the UI (§19).
   if (!env.ALLOW_PUBLIC_REGISTRATION) {
     logAuthEvent("register.blocked", { ip: await getClientIp() });
-    return { success: false, error: "Public registration is currently disabled." };
+    return {
+      success: false,
+      error: "Public registration is currently disabled.",
+    };
   }
 
   const parsed = registerSchema.safeParse(input);
   if (!parsed.success) {
-    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
   }
   const data = parsed.data;
 
@@ -186,7 +202,10 @@ export async function registerOrganization(input: unknown): Promise<ActionResult
     data.email,
   ]).safeParse(data.password);
   if (!contextual.success) {
-    return { success: false, error: contextual.error.issues[0]?.message ?? "Weak password" };
+    return {
+      success: false,
+      error: contextual.error.issues[0]?.message ?? "Weak password",
+    };
   }
 
   try {
@@ -197,7 +216,10 @@ export async function registerOrganization(input: unknown): Promise<ActionResult
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      return { success: false, error: "That email or organization is already registered." };
+      return {
+        success: false,
+        error: "That email or organization is already registered.",
+      };
     }
     throw error;
   }
@@ -219,7 +241,9 @@ export async function registerOrganization(input: unknown): Promise<ActionResult
 
 // --- login (§6.1) -----------------------------------------------------------
 
-export async function signInAction(input: unknown): Promise<ActionResult<null>> {
+export async function signInAction(
+  input: unknown,
+): Promise<ActionResult<null>> {
   const parsed = loginSchema.safeParse(input);
   if (!parsed.success) {
     // Same generic copy — never reveal which field failed (§15).
@@ -250,7 +274,11 @@ export async function signInAction(input: unknown): Promise<ActionResult<null>> 
   } catch (error) {
     if (error instanceof AuthError) {
       recordFailedAttempt(rateKey);
-      logAuthEvent("login.failure", { email, ip, reason: "invalid_credentials" });
+      logAuthEvent("login.failure", {
+        email,
+        ip,
+        reason: "invalid_credentials",
+      });
       return { success: false, error: GENERIC_LOGIN_ERROR };
     }
     throw error;
@@ -274,7 +302,10 @@ function safeCallbackPath(callbackUrl: string): string {
 export async function signOutAction(): Promise<void> {
   const user = await getCurrentUser();
   if (user) {
-    logAuthEvent("logout", { userId: user.id, organizationId: user.organizationId });
+    logAuthEvent("logout", {
+      userId: user.id,
+      organizationId: user.organizationId,
+    });
   }
   await signOut({ redirect: false });
   redirect("/login");
@@ -282,31 +313,47 @@ export async function signOutAction(): Promise<void> {
 
 // --- password change (§9.4) -------------------------------------------------
 
-export async function changePassword(input: unknown): Promise<ActionResult<null>> {
+export async function changePassword(
+  input: unknown,
+): Promise<ActionResult<null>> {
   // Sensitive write → authoritative DB re-check (§7.6).
   const user = await requireActiveUser();
 
   const parsed = changePasswordSchema.safeParse(input);
   if (!parsed.success) {
-    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
   }
   const { currentPassword, newPassword } = parsed.data;
 
-  const contextual = createPasswordSchema([user.name, user.email]).safeParse(newPassword);
+  const contextual = createPasswordSchema([user.name, user.email]).safeParse(
+    newPassword,
+  );
   if (!contextual.success) {
-    return { success: false, error: contextual.error.issues[0]?.message ?? "Weak password" };
+    return {
+      success: false,
+      error: contextual.error.issues[0]?.message ?? "Weak password",
+    };
   }
 
   if (!user.passwordHash) {
     return { success: false, error: "Your current password is incorrect" };
   }
-  const currentMatches = await verifyPassword(currentPassword, user.passwordHash);
+  const currentMatches = await verifyPassword(
+    currentPassword,
+    user.passwordHash,
+  );
   if (!currentMatches) {
     return { success: false, error: "Your current password is incorrect" };
   }
 
   const newHash = await hashPassword(newPassword);
-  await db.user.update({ where: { id: user.id }, data: { passwordHash: newHash } });
+  await db.user.update({
+    where: { id: user.id },
+    data: { passwordHash: newHash },
+  });
   logAuthEvent("password.changed", {
     userId: user.id,
     organizationId: user.organizationId,
@@ -341,16 +388,24 @@ export async function createTeammate(
 
   const parsed = createTeammateSchema.safeParse(input);
   if (!parsed.success) {
-    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
   }
   const { name, email, role } = parsed.data;
 
   // Email is unique per (organizationId, email) — scope the check to this org.
   const existing = await db.user.findUnique({
-    where: { organizationId_email: { organizationId: actor.organizationId, email } },
+    where: {
+      organizationId_email: { organizationId: actor.organizationId, email },
+    },
   });
   if (existing) {
-    return { success: false, error: "A team member with that email already exists." };
+    return {
+      success: false,
+      error: "A team member with that email already exists.",
+    };
   }
 
   const temporaryPassword = generateTemporaryPassword();
@@ -374,7 +429,10 @@ export async function createTeammate(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      return { success: false, error: "A team member with that email already exists." };
+      return {
+        success: false,
+        error: "A team member with that email already exists.",
+      };
     }
     throw error;
   }

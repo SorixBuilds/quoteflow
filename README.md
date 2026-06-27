@@ -3,8 +3,8 @@
 > A custom lead-to-job pipeline system for home service contractors — from first
 > call to signed job, without anything falling through the cracks.
 
-> **Status:** Phase 1 (project foundation) complete. Application features are not
-> built yet — see the roadmap below.
+> **Status:** Phases 1–3 complete (project foundation, database, authentication).
+> Business features are not built yet — see the roadmap below.
 
 ## The Problem
 
@@ -25,19 +25,37 @@ winning?"
 - **Icons:** Lucide
 - **Tooling:** ESLint, Prettier, Vitest, GitHub Actions CI
 
-Database (Prisma + Neon Postgres), authentication (Auth.js), PDF export
-(`@react-pdf/renderer`), charts (Recharts), and tables (TanStack Table) are
-introduced in their respective feature phases.
+- **Database:** Prisma + Neon Postgres
+- **Auth:** Auth.js (next-auth v5), Credentials provider, JWT sessions, bcrypt
+
+PDF export (`@react-pdf/renderer`), charts (Recharts), and tables (TanStack
+Table) are introduced in their respective feature phases.
 
 ## Getting Started
 
 ```bash
 npm install
-cp .env.example .env   # then fill in values
+cp .env.example .env            # then fill in values
+npx auth secret                 # generates AUTH_SECRET into .env (or use openssl rand -base64 32)
+npm run db:migrate              # apply the Prisma schema to your database
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+### First-run bootstrap
+
+QuoteFlow has no seeded login. On a fresh database, any route sends you to
+**`/setup`** — a one-time wizard that creates your organization and the first
+**owner** account, then signs you in. Once an organization exists, `/setup`
+becomes permanently inert (404) and everyone signs in at **`/login`**.
+
+- New team members are added by an owner under **Settings → Team**, which issues
+  a one-time temporary password to share with them.
+- Password resets in this phase are manual (an owner/developer updates the
+  affected user). Self-service email reset is a later phase.
+- Public self-registration (`/register`) is **off by default**; enable it only
+  on a public demo deployment via `ALLOW_PUBLIC_REGISTRATION=true`.
 
 ## Scripts
 
@@ -71,11 +89,13 @@ src/
 
 ## Environment Variables
 
-| Variable              | Description                          | Phase |
-| --------------------- | ------------------------------------ | ----- |
-| `NEXT_PUBLIC_APP_URL` | Public base URL of the app           | 1     |
-| `DATABASE_URL`        | Postgres connection string (Neon)    | later |
-| `AUTH_SECRET`         | Auth.js session secret               | later |
+| Variable                    | Description                                                            | Required | Phase |
+| --------------------------- | --------------------------------------------------------------------- | -------- | ----- |
+| `NEXT_PUBLIC_APP_URL`       | Public base URL of the app                                            | Yes      | 1     |
+| `DATABASE_URL`              | Postgres connection string (Neon)                                    | Yes      | 2     |
+| `AUTH_SECRET`               | Signs/encrypts the JWT session cookie — unique per environment        | Yes      | 3     |
+| `ALLOW_PUBLIC_REGISTRATION` | Enables `/register`. Defaults to `false`; `true` only on public demo  | Yes      | 3     |
+| `BCRYPT_COST_FACTOR`        | bcrypt work factor. Optional — defaults to `12`                       | No       | 3     |
 
 ## Roadmap
 

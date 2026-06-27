@@ -45,7 +45,10 @@ export function getRetryDelayMs(key: string, now: number = Date.now()): number {
 }
 
 /** Record a failed login attempt for `key`, extending the progressive delay. */
-export function recordFailedAttempt(key: string, now: number = Date.now()): void {
+export function recordFailedAttempt(
+  key: string,
+  now: number = Date.now(),
+): void {
   const entry = store.get(key);
   if (!entry || now - entry.lastFailureAt > WINDOW_MS) {
     store.set(key, { failures: 1, lastFailureAt: now });
