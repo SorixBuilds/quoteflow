@@ -8,6 +8,13 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      ALLOW_PUBLIC_REGISTRATION: "false"
+
     steps:
       - uses: actions/checkout@v4
 
