@@ -1,15 +1,18 @@
 import type { ReactNode } from "react";
-import Link from "next/link";
-import { Workflow } from "lucide-react";
 
-import { SignOutButton } from "@/components/auth/SignOutButton";
+import { Sidebar } from "@/components/shared/Sidebar";
+import { Topbar } from "@/components/shared/Topbar";
+import { NotificationBell } from "@/features/notifications/components/NotificationBell";
+import { getRecentNotifications } from "@/features/notifications/queries";
+import { GlobalSearch } from "@/features/search/components/GlobalSearch";
 import { requireSession } from "@/features/auth/queries";
-import { siteConfig } from "@/config/site";
+import { getCompanyConfig } from "@/lib/config/service";
 
 /**
- * Authenticated app shell. Calls `requireSession()` so every nested route is
- * guarded server-side as well as by middleware (defense in depth, §6.5). Renders
- * the topbar with the current user and the logout control.
+ * Authenticated app shell (Phase 4, §8). Calls `requireSession()` so every
+ * nested route is guarded server-side as well as by middleware (defense in
+ * depth). Reads the tenant's feature flags once, here, through the Configuration
+ * Service and passes them (plus the role) to the role-filtered Sidebar.
  */
 export default async function DashboardLayout({
   children,
@@ -17,30 +20,24 @@ export default async function DashboardLayout({
   children: ReactNode;
 }) {
   const user = await requireSession();
+  const [{ featureFlags }, notifications] = await Promise.all([
+    getCompanyConfig(user.organizationId),
+    getRecentNotifications(),
+  ]);
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="border-b">
-        <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-6">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="bg-primary text-primary-foreground flex size-7 items-center justify-center rounded-md">
-              <Workflow className="size-4" />
-            </div>
-            <span className="text-foreground text-sm font-semibold">
-              {siteConfig.name}
-            </span>
-          </Link>
-          <div className="flex items-center gap-3">
-            <span className="text-muted-foreground hidden text-sm sm:inline">
-              {user.name || user.email}
-            </span>
-            <SignOutButton />
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-8">
-        {children}
-      </main>
+      <Topbar
+        userLabel={user.name || user.email}
+        search={<GlobalSearch />}
+        notifications={<NotificationBell initialNotifications={notifications} />}
+      />
+      <div className="flex flex-1">
+        <aside className="hidden w-60 shrink-0 border-r p-4 md:block">
+          <Sidebar role={user.role} featureFlags={featureFlags} />
+        </aside>
+        <main className="min-w-0 flex-1">{children}</main>
+      </div>
     </div>
   );
 }

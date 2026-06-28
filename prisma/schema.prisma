@@ -94,12 +94,19 @@ enum TaskStatus {
 // Polymorphic target type for Activity / Note / Task. `entityId` is NOT a
 // DB-enforced foreign key — referential integrity here is the application
 // layer's responsibility (documented trade-off, Section 8).
+//
+// Phase 4 (Step 2): the Activity table is already polymorphic per this enum, so
+// no leadId→entityType/entityId migration is required (the frozen Phase 2 shape
+// already satisfies it). ORGANIZATION is added additively so org-level events
+// (e.g. `settings_updated`, emitted by the Configuration Service) can be logged
+// against the polymorphic timeline.
 enum EntityType {
   LEAD
   QUOTE
   JOB
   CUSTOMER
   INVOICE
+  ORGANIZATION
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +121,12 @@ model Organization {
   timezone  String
   currency  String // ISO 4217
   settings  Json // terminology/branding overrides
+  // Phase 4 (§29): atomic sequence counters for human-facing quote/invoice
+  // numbers. Dedicated Int columns — never JSON — so a single
+  // `UPDATE ... SET x = x + 1 RETURNING x` increments them with the database's
+  // own row-level locking serializing concurrent callers (lib/numbering).
+  nextQuoteNumber   Int @default(1)
+  nextInvoiceNumber Int @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -132,6 +145,7 @@ model Organization {
   activities        Activity[]
   notes             Note[]
   tasks             Task[]
+  notifications     Notification[]
 }
 
 model User {
@@ -157,6 +171,7 @@ model User {
   authoredNotes  Note[]
   assignedTasks  Task[]     @relation("TaskAssignedTo")
   createdTasks   Task[]     @relation("TaskCreatedBy")
+  notifications  Notification[]
 
   // Scoped, not global: two orgs can each onboard the same email independently.
   @@unique([organizationId, email])
@@ -445,6 +460,34 @@ model Activity {
   createdBy    User         @relation(fields: [createdById], references: [id])
 
   @@index([organizationId, entityType, entityId])
+}
+
+// Phase 4 (§30): in-app notification persistence. Extended beyond a bare
+// announcement with priority, a clickable action target, and structured
+// metadata. `priority` is a string in V1 ("LOW" | "NORMAL" | "HIGH"), promoted
+// to an enum once the set is proven stable. `metadata` is app-internal data
+// only — never rendered as trusted markup (§22 Security Review).
+model Notification {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @db.Uuid
+  userId         String      @db.Uuid
+  type           String
+  title          String
+  body           String?
+  priority       String      @default("NORMAL")
+  entityType     EntityType?
+  entityId       String?     @db.Uuid
+  actionUrl      String?
+  actionLabel    String?
+  metadata       Json?
+  isRead         Boolean     @default(false)
+  readAt         DateTime?
+  createdAt      DateTime    @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, userId, isRead, createdAt])
 }
 
 model Note {
