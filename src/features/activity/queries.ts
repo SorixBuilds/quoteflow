@@ -49,3 +49,43 @@ export async function getActivityForEntity(
     actorName: row.createdBy.name,
   }));
 }
+
+export type OrgActivityEntry = ActivityEntry & {
+  entityType: EntityType;
+  entityId: string;
+};
+
+/**
+ * Org-wide recent activity feed (Phase 5, §33). The one Activity query Phase 4
+ * did not need — Phase 4 had no entities to show activity *across*. Additive:
+ * the per-entity query above is unchanged. Company-scoped; reverse-chronological.
+ */
+export async function getRecentActivityForOrganization(
+  organizationId: string,
+  limit = 15,
+): Promise<OrgActivityEntry[]> {
+  const rows = await db.activity.findMany({
+    where: { organizationId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: {
+      id: true,
+      type: true,
+      message: true,
+      createdAt: true,
+      entityType: true,
+      entityId: true,
+      createdBy: { select: { name: true } },
+    },
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    type: row.type,
+    message: row.message,
+    createdAt: row.createdAt,
+    actorName: row.createdBy.name,
+    entityType: row.entityType,
+    entityId: row.entityId,
+  }));
+}

@@ -17,10 +17,11 @@ describe("Sidebar (Step 6)", () => {
     expect(screen.getByRole("link", { name: /reports/i })).toBeInTheDocument();
   });
 
-  it("hides Settings/Reports for STAFF", () => {
+  it("hides Settings for STAFF but shows Reports & Catalog (§11)", () => {
     render(<Sidebar role="STAFF" featureFlags={flags} />);
     expect(screen.queryByRole("link", { name: /settings/i })).toBeNull();
-    expect(screen.queryByRole("link", { name: /reports/i })).toBeNull();
+    expect(screen.getByRole("link", { name: /reports/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /catalog/i })).toBeInTheDocument();
   });
 
   it("shows only Jobs for FIELD", () => {

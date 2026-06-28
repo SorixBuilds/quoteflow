@@ -55,6 +55,9 @@ export function GlobalSearch() {
     ? [
         { label: "Leads", items: results.leads },
         { label: "Customers", items: results.customers },
+        { label: "Quotes", items: results.quotes },
+        { label: "Jobs", items: results.jobs },
+        { label: "Invoices", items: results.invoices },
       ].filter((g) => g.items.length > 0)
     : [];
   const hasResults = groups.length > 0;
@@ -66,7 +69,7 @@ export function GlobalSearch() {
         <Input
           type="search"
           value={query}
-          placeholder="Search leads & customers…"
+          placeholder="Search leads, quotes, jobs, invoices…"
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => results && setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}

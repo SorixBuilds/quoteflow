@@ -5,6 +5,8 @@ import {
   Building2,
   FileText,
   LayoutDashboard,
+  Package,
+  Receipt,
   Settings,
   Users,
   Zap,
@@ -52,12 +54,29 @@ export const NAV_ITEMS: readonly NavItem[] = [
     roles: ["OWNER", "STAFF", "FIELD"],
   },
   {
+    label: "Invoices",
+    href: "/invoices",
+    icon: Receipt,
+    roles: ["OWNER", "STAFF"],
+  },
+  {
     label: "Customers",
     href: "/customers",
     icon: Building2,
     roles: ["OWNER", "STAFF"],
   },
-  { label: "Reports", href: "/reports", icon: BarChart3, roles: ["OWNER"] },
+  {
+    label: "Reports",
+    href: "/reports",
+    icon: BarChart3,
+    roles: ["OWNER", "STAFF"],
+  },
+  {
+    label: "Catalog",
+    href: "/catalog",
+    icon: Package,
+    roles: ["OWNER", "STAFF"],
+  },
   { label: "Settings", href: "/settings", icon: Settings, roles: ["OWNER"] },
   // Feature-flagged, not-yet-built module. Hidden by default (flag defaults to
   // false); proves the flag mechanism end-to-end (Step 17, §20).

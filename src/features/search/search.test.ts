@@ -6,7 +6,13 @@ import { db } from "@/lib/db";
 import { requireCompanyScope } from "@/lib/permissions";
 
 vi.mock("@/lib/db", () => ({
-  db: { lead: { findMany: vi.fn() }, customer: { findMany: vi.fn() } },
+  db: {
+    lead: { findMany: vi.fn() },
+    customer: { findMany: vi.fn() },
+    quote: { findMany: vi.fn() },
+    job: { findMany: vi.fn() },
+    invoice: { findMany: vi.fn() },
+  },
 }));
 vi.mock("@/lib/permissions", () => ({ requireCompanyScope: vi.fn() }));
 
@@ -47,7 +53,7 @@ describe("globalSearch (Step 15)", () => {
 
   it("returns empty for short queries without querying", async () => {
     const result = await globalSearch("a");
-    expect(result).toEqual({ leads: [], customers: [] });
+    expect(result).toEqual({ leads: [], customers: [], quotes: [], jobs: [], invoices: [] });
     expect(db.lead.findMany).not.toHaveBeenCalled();
   });
 
@@ -57,6 +63,9 @@ describe("globalSearch (Step 15)", () => {
       { id: "l-exact", name: "Ali", email: null, phone: "222" },
     ] as never);
     vi.mocked(db.customer.findMany).mockResolvedValue([] as never);
+    vi.mocked(db.quote.findMany).mockResolvedValue([] as never);
+    vi.mocked(db.job.findMany).mockResolvedValue([] as never);
+    vi.mocked(db.invoice.findMany).mockResolvedValue([] as never);
 
     const result = await globalSearch("ali");
 

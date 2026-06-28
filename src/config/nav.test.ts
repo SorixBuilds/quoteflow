@@ -8,22 +8,25 @@ const labels = (role: Parameters<typeof filterNav>[0], f = flags) =>
   filterNav(role, f).map((i) => i.label);
 
 describe("filterNav — role filtering (§8)", () => {
-  it("OWNER sees the full standard nav", () => {
+  it("OWNER sees the full standard nav (§10 order)", () => {
     expect(labels("OWNER")).toEqual([
       "Dashboard",
       "Leads",
       "Quotes",
       "Jobs",
+      "Invoices",
       "Customers",
       "Reports",
+      "Catalog",
       "Settings",
     ]);
   });
 
-  it("STAFF sees everything except Reports and Settings", () => {
+  it("STAFF sees everything except Settings (§11)", () => {
     const result = labels("STAFF");
     expect(result).toContain("Dashboard");
-    expect(result).not.toContain("Reports");
+    expect(result).toContain("Reports");
+    expect(result).toContain("Catalog");
     expect(result).not.toContain("Settings");
   });
 
