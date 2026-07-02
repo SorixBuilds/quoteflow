@@ -34,6 +34,7 @@ export default async function NewQuotePage({
           currency={config.locale.currency}
           leadId={Array.isArray(leadId) ? leadId[0] : leadId}
           onSave={createQuote}
+          aiEnabled={config.featureFlags.ai}
         />
       </PageContent>
     </PageLayout>

@@ -7,6 +7,7 @@ import { requireRole } from "@/lib/permissions";
 import { getCompanyConfig } from "@/lib/config/service";
 import { getCustomerById } from "@/features/customers/queries";
 import { CustomerOverview } from "@/features/customers/components/CustomerOverview";
+import { PortalAccessPanel } from "@/features/customer-portal/components/PortalAccessPanel";
 
 export const metadata: Metadata = { title: "Customer" };
 
@@ -37,7 +38,12 @@ export default async function CustomerDetailPage({
           entityId={customer.id}
           basePath={`/customers/${customer.id}`}
           tab={tab}
-          overview={<CustomerOverview customer={customer} currency={config.locale.currency} />}
+          overview={
+            <div className="space-y-6">
+              <CustomerOverview customer={customer} currency={config.locale.currency} />
+              <PortalAccessPanel organizationId={session.organizationId} customerId={customer.id} />
+            </div>
+          }
         />
       </PageContent>
     </PageLayout>

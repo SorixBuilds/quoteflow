@@ -4,11 +4,17 @@ import { PageContent, PageHeader, PageLayout } from "@/features/layout/component
 import { requireRole } from "@/lib/permissions";
 import { getCompanyConfig } from "@/lib/config/service";
 import {
+  getAgingReport,
+  getCustomerLifetimeValue,
   getLeadSourceRoi,
   getLossPattern,
+  getProfitabilityReport,
+  getQuoteAcceptanceTrend,
   getQuoteTurnaround,
   getRevenueReport,
+  getTaxSummary,
 } from "@/features/reports/queries";
+import { getTechnicianPerformance } from "@/features/dashboard/insights";
 import { ReportsTabs } from "@/features/reports/components/ReportsTabs";
 import {
   LeadSourceRoiPanel,
@@ -16,6 +22,14 @@ import {
   RevenuePanel,
   TurnaroundPanel,
 } from "@/features/reports/components/ReportPanels";
+import {
+  AcceptanceTrendPanel,
+  AgingPanel,
+  CustomerLifetimeValuePanel,
+  ProfitabilityPanel,
+  TaxSummaryPanel,
+  TechnicianUtilizationPanel,
+} from "@/features/reports/components/AdvancedReportPanels";
 
 export const metadata: Metadata = { title: "Reports" };
 
@@ -49,6 +63,25 @@ export default async function ReportsPage({
         {tab === "revenue" ? (
           // getRevenueReport is OWNER-gated; a STAFF user is redirected by it.
           <RevenuePanel report={await getRevenueReport()} currency={currency} />
+        ) : null}
+        {/* Phase 6B Step 10 (§18) — every query below carries its own role gate. */}
+        {tab === "acceptance" ? (
+          <AcceptanceTrendPanel rows={await getQuoteAcceptanceTrend()} />
+        ) : null}
+        {tab === "utilization" ? (
+          <TechnicianUtilizationPanel rows={await getTechnicianPerformance()} />
+        ) : null}
+        {tab === "clv" ? (
+          <CustomerLifetimeValuePanel rows={await getCustomerLifetimeValue()} currency={currency} />
+        ) : null}
+        {tab === "aging" ? (
+          <AgingPanel buckets={await getAgingReport()} currency={currency} />
+        ) : null}
+        {tab === "profitability" ? (
+          <ProfitabilityPanel rows={await getProfitabilityReport()} currency={currency} />
+        ) : null}
+        {tab === "tax" ? (
+          <TaxSummaryPanel rows={await getTaxSummary()} currency={currency} />
         ) : null}
       </PageContent>
     </PageLayout>

@@ -7,6 +7,7 @@ import { requireSession } from "@/features/auth/queries";
 import { getCompanyConfig } from "@/lib/config/service";
 import { getDashboardData } from "@/features/dashboard/queries";
 import { DashboardView } from "@/features/dashboard/components/DashboardView";
+import { DashboardInsights } from "@/features/dashboard/components/InsightWidgets";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -39,7 +40,13 @@ export default async function DashboardPage({
         description="Your business at a glance."
       />
       <PageContent>
-        <DashboardView data={data} />
+        <div className="space-y-6">
+          <DashboardView data={data} />
+          <DashboardInsights
+            isOwner={user.role === "OWNER"}
+            currency={config.locale.currency}
+          />
+        </div>
       </PageContent>
     </PageLayout>
   );

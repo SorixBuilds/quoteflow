@@ -6,8 +6,10 @@ import type { JobStatus, Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { requireActiveUser, requireRole } from "@/lib/permissions";
+import { emitEvent } from "@/lib/events";
 import { canTransitionJob, JOB_STATUS_LABELS } from "@/lib/status";
 import { logActivity } from "@/features/activity/actions";
+import { notifyJobScheduled, notifyJobCompleted } from "@/features/email/dispatch";
 import { createNotification } from "@/features/notifications/actions";
 import { scheduleJobSchema, type ScheduleJobInput } from "@/features/jobs/schema";
 import { BusinessRuleError, STALE_TRANSITION_MESSAGE, toActionError } from "@/lib/errors";
@@ -83,6 +85,12 @@ export async function scheduleJob(
       });
     }
 
+    // Email the customer their scheduled date (§7). Non-fatal; no-op if unscheduled.
+    if (scheduledDate) {
+      await notifyJobScheduled(organizationId, id);
+      emitEvent("job.scheduled", { organizationId, jobId: id });
+    }
+
     revalidatePath(`/jobs/${id}`);
     revalidatePath("/jobs");
     return { success: true, data: null };
@@ -151,6 +159,12 @@ export async function changeJobStatus(
           : `${JOB_STATUS_LABELS[job.status]} → ${JOB_STATUS_LABELS[status]}`,
       createdById: session.id,
     });
+
+    // Email the customer when the job is completed (§7). Non-fatal.
+    if (status === "COMPLETED") {
+      await notifyJobCompleted(organizationId, id);
+      emitEvent("job.completed", { organizationId, jobId: id });
+    }
 
     revalidatePath(`/jobs/${id}`);
     revalidatePath("/jobs");

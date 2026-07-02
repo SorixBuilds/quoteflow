@@ -6,11 +6,13 @@ import type { LeadStatus } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { requireActiveUser, requireCompanyScope, requireRole } from "@/lib/permissions";
+import { emitEvent } from "@/lib/events";
 import { canTransitionLead, LEAD_STATUS_LABELS } from "@/lib/status";
 import { logActivity } from "@/features/activity/actions";
 import { createNotification } from "@/features/notifications/actions";
 import { BusinessRuleError, STALE_TRANSITION_MESSAGE, toActionError } from "@/lib/errors";
 import { leadSchema, leadStatusChangeSchema, type LeadInput } from "@/features/leads/schema";
+import { createLeadCore } from "@/features/leads/service";
 import type { ActionResult } from "@/types";
 
 /**
@@ -27,30 +29,8 @@ export async function createLead(input: LeadInput): Promise<ActionResult<{ id: s
     const { organizationId } = await requireCompanyScope(session);
     const data = leadSchema.parse(input);
 
-    const lead = await db.lead.create({
-      data: {
-        organizationId,
-        name: data.name,
-        email: data.email ? data.email : null,
-        phone: data.phone,
-        sourceId: data.sourceId ? data.sourceId : null,
-        assignedToId: data.assignedToId ? data.assignedToId : null,
-        status: "NEW",
-      },
-      select: { id: true, assignedToId: true },
-    });
-
-    await logActivity({
-      organizationId,
-      entityType: "LEAD",
-      entityId: lead.id,
-      type: "created",
-      createdById: session.id,
-    });
-
-    if (lead.assignedToId) {
-      await notifyAssignee(lead.assignedToId, lead.id, data.name);
-    }
+    // Business core shared verbatim with POST /api/v1/leads (§21.6, Step 8).
+    const lead = await createLeadCore({ organizationId, actorId: session.id }, data);
 
     revalidatePath("/leads");
     return { success: true, data: { id: lead.id } };
@@ -179,6 +159,11 @@ export async function changeLeadStatus(
       }`,
       createdById: session.id,
     });
+
+    // A Lead reaching WON is the "converted" trigger (§15). Fired only on that edge.
+    if (status === "WON") {
+      emitEvent("lead.converted", { organizationId, leadId: id });
+    }
 
     revalidatePath(`/leads/${id}`);
     revalidatePath("/leads");

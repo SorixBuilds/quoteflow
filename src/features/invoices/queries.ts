@@ -5,6 +5,7 @@ import { requireCompanyScope, requireRole } from "@/lib/permissions";
 import { moneyToString } from "@/lib/money";
 import { parseTableParams } from "@/features/tables/buildPrismaQuery";
 import { invoiceBalanceFromStrings, isInvoiceOverdue } from "@/features/invoices/calculations";
+import { fireOverdueOnRead } from "@/features/automation/engine";
 import type { TableParams } from "@/features/tables/types";
 
 /**
@@ -76,26 +77,32 @@ export async function getInvoices(source: ParamSource): Promise<InvoiceListResul
     db.invoice.count({ where }),
   ]);
 
-  return {
-    rows: rows.map((r) => {
-      const amount = moneyToString(r.amount);
-      const paidAmount = moneyToString(r.paidAmount);
-      return {
-        id: r.id,
-        invoiceNumber: r.invoiceNumber,
-        customerName: r.customer.name,
-        amount,
-        paidAmount,
-        balance: moneyToString(invoiceBalanceFromStrings(amount, paidAmount)),
-        status: r.status,
-        dueDate: r.dueDate,
-        overdue: isInvoiceOverdue(r.status, r.dueDate),
-        currency: r.organization.currency,
-      };
-    }),
-    totalCount,
-    params: parsed.params,
-  };
+  const mapped: InvoiceListRow[] = rows.map((r) => {
+    const amount = moneyToString(r.amount);
+    const paidAmount = moneyToString(r.paidAmount);
+    return {
+      id: r.id,
+      invoiceNumber: r.invoiceNumber,
+      customerName: r.customer.name,
+      amount,
+      paidAmount,
+      balance: moneyToString(invoiceBalanceFromStrings(amount, paidAmount)),
+      status: r.status,
+      dueDate: r.dueDate,
+      overdue: isInvoiceOverdue(r.status, r.dueDate),
+      currency: r.organization.currency,
+    };
+  });
+
+  // Time-based automation (§15.7): fire `invoice.overdue` lazily for the overdue
+  // rows on this page. No-op (one indexed lookup) unless an overdue rule exists;
+  // gated to once/day per invoice. Never throws.
+  await fireOverdueOnRead(
+    organizationId,
+    mapped.filter((r) => r.overdue).map((r) => r.id),
+  );
+
+  return { rows: mapped, totalCount, params: parsed.params };
 }
 
 export type PaymentEntry = {

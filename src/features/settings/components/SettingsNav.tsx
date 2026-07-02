@@ -17,6 +17,10 @@ const TABS: SettingsTab[] = [
   { label: "Business Hours & Locale", href: "/settings/locale", roles: ["OWNER"] },
   { label: "Numbering & Tax", href: "/settings/numbering", roles: ["OWNER"] },
   { label: "PDF & Email", href: "/settings/branding", roles: ["OWNER"] },
+  { label: "Email Delivery", href: "/settings/email", roles: ["OWNER"] },
+  { label: "Automations", href: "/settings/automations", roles: ["OWNER"] },
+  { label: "API Keys", href: "/settings/api-keys", roles: ["OWNER"] },
+  { label: "Integrations", href: "/settings/integrations", roles: ["OWNER"] },
   { label: "Feature Flags", href: "/settings/features", roles: ["OWNER"] },
   { label: "Team & Roles", href: "/settings/team", roles: ["OWNER"] },
   {

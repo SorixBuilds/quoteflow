@@ -13,6 +13,8 @@ import { AssigneeSelect } from "@/components/shared/AssigneeSelect";
 import { StatusTransitionMenu, type TransitionOption } from "@/components/shared/StatusTransitionMenu";
 import { showErrorToast, showSuccessToast } from "@/components/shared/SuccessToast";
 import { changeJobStatus, scheduleJob, updateJobNotes } from "@/features/jobs/actions";
+import { AiSuggest } from "@/features/ai/components/AiSuggest";
+import { summarizeJob } from "@/features/ai/actions";
 import { JOB_STATUS_LABELS, nextJobStatuses } from "@/lib/status";
 import type { JobDetail } from "@/features/jobs/queries";
 
@@ -20,9 +22,12 @@ import type { JobDetail } from "@/features/jobs/queries";
 export function JobOverview({
   job,
   technicians,
+  aiEnabled = false,
 }: {
   job: JobDetail;
   technicians: { id: string; name: string }[];
+  /** The org's `ai` flag (§16.5) — the summary affordance renders only when true. */
+  aiEnabled?: boolean;
 }) {
   const [notes, setNotes] = useState(job.notes ?? "");
   const [scheduledDate, setScheduledDate] = useState(
@@ -160,6 +165,12 @@ export function JobOverview({
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           className="border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-sm shadow-sm focus-visible:ring-2 focus-visible:outline-none"
+        />
+        <AiSuggest
+          enabled={aiEnabled}
+          label="Summarize this job with AI"
+          request={() => summarizeJob(job.id)}
+          onAccept={(text) => setNotes(notes.trim() === "" ? text : `${notes}\n\n${text}`)}
         />
         <div className="flex justify-end">
           <Button

@@ -9,6 +9,10 @@ describe("route classification (§11.2)", () => {
     expect(classifyRoute("/api/lead-capture").kind).toBe("public");
   });
 
+  it("treats the health probe as public (Step 11)", () => {
+    expect(classifyRoute("/api/health").kind).toBe("public");
+  });
+
   it("treats login and register as guest-only", () => {
     expect(classifyRoute("/login").kind).toBe("guest-only");
     expect(classifyRoute("/register").kind).toBe("guest-only");
@@ -48,6 +52,14 @@ describe("route classification (§11.2)", () => {
     if (leads.kind === "protected") {
       expect([...leads.roles].sort()).toEqual(["OWNER", "STAFF"]);
     }
+  });
+
+  it("classifies /api/v1/* as the API plane — never cookie-gated or redirected (§21, §22.1)", () => {
+    expect(classifyRoute("/api/v1").kind).toBe("api");
+    expect(classifyRoute("/api/v1/quotes").kind).toBe("api");
+    expect(classifyRoute("/api/v1/leads/123").kind).toBe("api");
+    // A lookalike outside the versioned tree gets no API pass-through.
+    expect(classifyRoute("/api/v2-preview").kind).toBe("protected");
   });
 
   it("fails closed: an unlisted path is protected for any authenticated role", () => {
