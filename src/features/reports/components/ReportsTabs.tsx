@@ -14,12 +14,24 @@ const OPERATIONAL = [
   { key: "turnaround", label: "Quote turnaround" },
   { key: "loss", label: "Loss pattern" },
   { key: "sources", label: "Lead source ROI" },
+  // Phase 6B Step 10 (§18.8) — operational additions, OWNER/STAFF.
+  { key: "acceptance", label: "Acceptance trend" },
+  { key: "utilization", label: "Technician utilization" },
+  { key: "clv", label: "Customer value" },
+];
+
+// Financial tabs (§18.8) — OWNER only, same gate Revenue & AR already uses.
+const FINANCIAL = [
+  { key: "revenue", label: "Revenue & AR" },
+  { key: "aging", label: "Aging" },
+  { key: "profitability", label: "Profitability" },
+  { key: "tax", label: "Tax summary" },
 ];
 
 export function ReportsTabs({ showRevenue }: { showRevenue: boolean }) {
   const params = useSearchParams();
   const active = params.get("tab") ?? "turnaround";
-  const tabs = showRevenue ? [...OPERATIONAL, { key: "revenue", label: "Revenue & AR" }] : OPERATIONAL;
+  const tabs = showRevenue ? [...OPERATIONAL, ...FINANCIAL] : OPERATIONAL;
 
   return (
     <nav aria-label="Reports" className="flex flex-wrap gap-1 border-b pb-px">

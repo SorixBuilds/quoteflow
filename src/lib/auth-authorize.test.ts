@@ -21,6 +21,9 @@ const activeUser = {
   role: "OWNER" as const,
   isActive: true,
   lastLoginAt: null,
+  // Phase 6 (§7.2) additive nullable column — mock fixture mirrors a pre-existing
+  // row (null = all notification channels enabled).
+  notificationPreferences: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

@@ -8,6 +8,8 @@ import { getQuoteById } from "@/features/quotes/queries";
 import { createQuoteShareToken } from "@/lib/tokens";
 import { env } from "@/lib/env";
 import { QuoteOverview } from "@/features/quotes/components/QuoteOverview";
+import { PageActions } from "@/features/layout/components/PageLayout";
+import { DocumentDownloadLinks } from "@/features/documents/components/DocumentDownloadLinks";
 
 export const metadata: Metadata = { title: "Quote" };
 
@@ -36,7 +38,14 @@ export default async function QuoteDetailPage({
       <PageHeader
         title={`${quote.quoteNumber}${quote.version > 1 ? ` (v${quote.version})` : ""}`}
         breadcrumb={[{ label: "Quotes", href: "/quotes" }, quote.quoteNumber]}
-      />
+      >
+        <PageActions>
+          <DocumentDownloadLinks
+            entityId={quote.id}
+            links={[{ type: "quote", label: "Download PDF" }]}
+          />
+        </PageActions>
+      </PageHeader>
       <PageContent>
         <EntityDetailTabs
           entityType="QUOTE"

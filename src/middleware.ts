@@ -26,6 +26,21 @@ export default auth((req) => {
     return NextResponse.next();
   }
 
+  // Customer Portal (§12.9): a wholly separate auth plane. The staff session is
+  // irrelevant here — never grant access from it, never redirect a (possibly
+  // signed-in staff) visitor away from it. Each /portal/* page self-gates via
+  // `requirePortalSession()` against its own disjoint cookie.
+  if (route.kind === "portal") {
+    return NextResponse.next();
+  }
+
+  // Public API (§21, §22.1): the third auth plane. Never cookie-gated here —
+  // every /api/v1/* handler self-gates via requireApiKey() and answers with the
+  // §21.10 JSON error envelope, never a login redirect.
+  if (route.kind === "api") {
+    return NextResponse.next();
+  }
+
   // Guest-only (incl. bootstrap): a signed-in user has no business here.
   if (route.kind === "guest-only" || route.kind === "bootstrap") {
     if (isLoggedIn) {

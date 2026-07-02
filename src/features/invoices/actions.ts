@@ -6,10 +6,12 @@ import { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { requireActiveUser, requireCompanyScope, requireRole } from "@/lib/permissions";
+import { emitEvent } from "@/lib/events";
 import { getNextInvoiceNumber } from "@/lib/numbering";
 import { toDecimal } from "@/lib/money";
 import { deriveInvoiceStatus } from "@/lib/status";
 import { logActivity } from "@/features/activity/actions";
+import { notifyInvoiceIssued, notifyPaymentReceived } from "@/features/email/dispatch";
 import { createInvoiceSchema, recordPaymentSchema, type CreateInvoiceInput, type RecordPaymentInput } from "@/features/invoices/schema";
 import { BusinessRuleError, toActionError } from "@/lib/errors";
 import type { ActionResult } from "@/types";
@@ -62,6 +64,10 @@ export async function createInvoice(
       createdById: session.id,
     });
 
+    // Email the customer the invoice + PDF (§6). Non-fatal.
+    await notifyInvoiceIssued(organizationId, invoice.id);
+    emitEvent("invoice.created", { organizationId, invoiceId: invoice.id });
+
     revalidatePath(`/jobs/${job.id}`);
     revalidatePath("/invoices");
     return { success: true, data: { id: invoice.id } };
@@ -88,7 +94,7 @@ export async function recordPayment(
         });
         if (!invoice) return null;
 
-        await tx.payment.create({
+        const payment = await tx.payment.create({
           data: {
             organizationId,
             invoiceId: invoice.id,
@@ -97,6 +103,7 @@ export async function recordPayment(
             reference: data.reference ? data.reference : null,
             paidAt: data.paidAt ? new Date(data.paidAt) : new Date(),
           },
+          select: { id: true },
         });
 
         // Recompute paidAmount from the authoritative sum of all payments (§21).
@@ -112,7 +119,7 @@ export async function recordPayment(
           data: { paidAmount, status },
         });
 
-        return { status, jobId: invoice.jobId };
+        return { status, jobId: invoice.jobId, paymentId: payment.id };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
@@ -148,6 +155,14 @@ export async function recordPayment(
         },
       });
     }
+
+    // Email the customer a payment confirmation + receipt PDF (§6). Non-fatal.
+    await notifyPaymentReceived(organizationId, data.invoiceId);
+    emitEvent("payment.recorded", {
+      organizationId,
+      paymentId: result.paymentId,
+      invoiceId: data.invoiceId,
+    });
 
     revalidatePath(`/invoices/${data.invoiceId}`);
     revalidatePath("/invoices");

@@ -6,28 +6,44 @@ import { cn } from "@/lib/utils";
 import { ActivityTimeline } from "@/features/activity/components/ActivityTimeline";
 import { NotesList } from "@/features/notes/components/NotesList";
 import { TaskList } from "@/features/tasks/components/TaskList";
+import { FileAttachmentList } from "@/features/files/components/FileAttachmentList";
+import { EmailHistoryList } from "@/features/email/components/EmailHistoryList";
 
 /**
- * Entity detail tab shell (Phase 5, §12, §13). The identical Overview | Activity
- * | Notes | Tasks tab set across Lead/Quote/Job/Customer/Invoice detail pages.
+ * Entity detail tab shell (Phase 5, §12, §13; Phase 6B Step 3, §14). The
+ * identical Overview | Activity | Notes | Tasks | Files tab set across
+ * Lead/Quote/Job/Customer/Invoice detail pages.
  *
  * Tab selection is URL-driven (`?tab=`) so every panel stays a server component
- * (the Activity/Notes/Tasks panels are async server components, keyed only by
- * `entityType`/`entityId`) — no client tab state, shareable links, and zero
- * per-module custom work.
+ * (the Activity/Notes/Tasks/Files panels are async server components, keyed only
+ * by `entityType`/`entityId`) — no client tab state, shareable links, and zero
+ * per-module custom work. Adding the Files tab here lights it up on every entity
+ * detail page at once, the entity-agnostic discipline §14 calls for.
  */
 
-export type DetailTab = "overview" | "activity" | "notes" | "tasks";
+export type DetailTab =
+  | "overview"
+  | "activity"
+  | "notes"
+  | "tasks"
+  | "files"
+  | "email";
 
 const TABS: { key: DetailTab; label: string }[] = [
   { key: "overview", label: "Overview" },
   { key: "activity", label: "Activity" },
   { key: "notes", label: "Notes" },
   { key: "tasks", label: "Tasks" },
+  { key: "files", label: "Files" },
+  { key: "email", label: "Email" },
 ];
 
 export function parseDetailTab(value: string | undefined): DetailTab {
-  return value === "activity" || value === "notes" || value === "tasks"
+  return value === "activity" ||
+    value === "notes" ||
+    value === "tasks" ||
+    value === "files" ||
+    value === "email"
     ? value
     : "overview";
 }
@@ -81,6 +97,12 @@ export function EntityDetailTabs({
         ) : null}
         {tab === "tasks" ? (
           <TaskList entityType={entityType} entityId={entityId} />
+        ) : null}
+        {tab === "files" ? (
+          <FileAttachmentList entityType={entityType} entityId={entityId} />
+        ) : null}
+        {tab === "email" ? (
+          <EmailHistoryList entityType={entityType} entityId={entityId} />
         ) : null}
       </div>
     </div>

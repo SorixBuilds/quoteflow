@@ -1,46 +1,19 @@
 import type { NextConfig } from "next";
 
+import { buildSecurityHeaders } from "./src/lib/security-headers";
+
 /**
- * Security headers (§15). Applied to every route.
- *
- * The CSP is deliberately pragmatic for Phase 3: it locks down framing, base
- * URI, and form targets, and restricts default/img/font/connect to same-origin,
- * while permitting the inline styles/scripts the Next.js App Router emits during
- * hydration. A nonce-based script policy is a worthwhile future hardening step
- * but requires per-request nonce plumbing through middleware — out of scope here.
+ * Security headers (§15, hardened in Phase 6B Step 11 §22) plus response
+ * hardening. The header policy lives in `src/lib/security-headers.ts` as a
+ * pure, unit-tested builder; this config just applies it to every route.
+ * `poweredByHeader: false` removes the `X-Powered-By: Next.js` fingerprint.
  */
 const isProd = process.env.NODE_ENV === "production";
 
-const contentSecurityPolicy = [
-  "default-src 'self'",
-  // 'unsafe-eval' is only needed by the dev/HMR runtime.
-  `script-src 'self' 'unsafe-inline'${isProd ? "" : " 'unsafe-eval'"}`,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  "connect-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-]
-  .join("; ")
-  .concat(isProd ? "; upgrade-insecure-requests" : "");
-
-const securityHeaders = [
-  { key: "Content-Security-Policy", value: contentSecurityPolicy },
-  { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "X-Frame-Options", value: "DENY" },
-  {
-    key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=()",
-  },
-];
-
 const nextConfig: NextConfig = {
+  poweredByHeader: false,
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [{ source: "/:path*", headers: buildSecurityHeaders(isProd) }];
   },
 };
 

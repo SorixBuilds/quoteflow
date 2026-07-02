@@ -31,6 +31,9 @@ const TYPE_LABELS: Record<string, string> = {
   job_scheduled: "Job scheduled",
   job_completed: "Job completed",
   settings_updated: "Settings updated",
+  file_attached: "File attached",
+  file_renamed: "File renamed",
+  file_removed: "File removed",
 };
 
 function labelForType(type: string): string {

@@ -114,21 +114,21 @@ enum EntityType {
 // ---------------------------------------------------------------------------
 
 model Organization {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  slug      String   @unique
-  logoUrl   String?
-  timezone  String
-  currency  String // ISO 4217
-  settings  Json // terminology/branding overrides
+  id                String   @id @default(uuid()) @db.Uuid
+  name              String
+  slug              String   @unique
+  logoUrl           String?
+  timezone          String
+  currency          String // ISO 4217
+  settings          Json // terminology/branding overrides
   // Phase 4 (§29): atomic sequence counters for human-facing quote/invoice
   // numbers. Dedicated Int columns — never JSON — so a single
   // `UPDATE ... SET x = x + 1 RETURNING x` increments them with the database's
   // own row-level locking serializing concurrent callers (lib/numbering).
-  nextQuoteNumber   Int @default(1)
-  nextInvoiceNumber Int @default(1)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  nextQuoteNumber   Int      @default(1)
+  nextInvoiceNumber Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   users             User[]
   customers         Customer[]
@@ -146,32 +146,56 @@ model Organization {
   notes             Note[]
   tasks             Task[]
   notifications     Notification[]
+
+  // Phase 6 (§7.2) — back-relations for the new infrastructure tables. These are
+  // relation fields only (no new column on Organization); each child carries the
+  // `organizationId` FK that enforces tenancy, exactly as every Phase 2–5 table does.
+  emailLogs          EmailLog[]
+  fileAttachments    FileAttachment[]
+  apiKeys            ApiKey[]
+  webhooks           Webhook[]
+  automationRules    AutomationRule[]
+  integrations       Integration[]
+  portalAccessTokens PortalAccessToken[]
+  aiUsageLogs        AiUsageLog[]
 }
 
 model User {
-  id             String    @id @default(uuid()) @db.Uuid
-  organizationId String    @db.Uuid
-  name           String
-  email          String
-  passwordHash   String?
-  role           Role
-  isActive       Boolean   @default(true)
-  lastLoginAt    DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                      String    @id @default(uuid()) @db.Uuid
+  organizationId          String    @db.Uuid
+  name                    String
+  email                   String
+  passwordHash            String?
+  role                    Role
+  isActive                Boolean   @default(true)
+  lastLoginAt             DateTime?
+  // Phase 6 (§7.2) — additive, nullable. `null` means "all channels enabled," so
+  // no backfill is required for existing rows. Shape:
+  // { inApp: boolean, email: boolean, mutedTypes: string[] }. A real column (not
+  // JSON-on-Organization) because it is per-user state, not per-tenant config.
+  notificationPreferences Json?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id])
 
   // Back-relations for the many FKs that point at User.
   assignedLeads  Lead[]
-  createdQuotes  Quote[]    @relation("QuoteCreatedBy")
-  assignedQuotes Quote[]    @relation("QuoteAssignedTo")
+  createdQuotes  Quote[]        @relation("QuoteCreatedBy")
+  assignedQuotes Quote[]        @relation("QuoteAssignedTo")
   assignedJobs   Job[]
   activities     Activity[]
   authoredNotes  Note[]
-  assignedTasks  Task[]     @relation("TaskAssignedTo")
-  createdTasks   Task[]     @relation("TaskCreatedBy")
+  assignedTasks  Task[]         @relation("TaskAssignedTo")
+  createdTasks   Task[]         @relation("TaskCreatedBy")
   notifications  Notification[]
+
+  // Phase 6 (§7.2) — only the two new tables that carry an actual `@relation` to
+  // User (FileAttachment.uploadedBy, ApiKey.createdBy) get a back-relation here.
+  // The other new tables store `createdById` as a plain Uuid (no relation field),
+  // matching the doc's own model definitions.
+  fileAttachments FileAttachment[]
+  apiKeys         ApiKey[]
 
   // Scoped, not global: two orgs can each onboard the same email independently.
   @@unique([organizationId, email])
@@ -199,6 +223,9 @@ model Customer {
   quotes   Quote[]
   jobs     Job[]
   invoices Invoice[]
+
+  // Phase 6 (§7.2.7) — the Customer Portal's stored, revocable access tokens.
+  portalAccessTokens PortalAccessToken[]
 
   @@index([organizationId])
   @@index([organizationId, email])
@@ -384,6 +411,11 @@ model Job {
   assignedToId   String?   @db.Uuid
   status         JobStatus @default(SCHEDULED)
   scheduledDate  DateTime?
+  // Phase 6 (§7.2) — additive, nullable. `scheduledDate` (frozen) remains the
+  // event start; `scheduledEndAt` is the optional end, enabling real calendar
+  // event blocks and conflict detection (§13). A Job without it renders as a
+  // point-in-time marker — unchanged behavior for every pre-existing row.
+  scheduledEndAt DateTime?
   completedAt    DateTime?
   notes          String?   @db.Text
   createdAt      DateTime  @default(now())
@@ -523,4 +555,207 @@ model Task {
 
   @@index([organizationId])
   @@index([assignedToId])
+}
+
+// ===========================================================================
+// Phase 6 — Advanced Platform infrastructure persistence (§7.2)
+//
+// Faithful translation of QuoteFlow_Phase6_Advanced_Platform_Architecture.md
+// §7.2.1–7.2.8 — the document's complete and exhaustive list of new persistence.
+// Every table is additive; nothing frozen is renamed, retyped, or removed. Each
+// table carries `organizationId` for row-level tenancy, exactly as every Phase
+// 2–5 tenant-owned table does, except WebhookDelivery / AutomationLog which are
+// children of an already-scoped parent (Webhook / AutomationRule). Free-text
+// `status`/`type` strings follow the frozen Activity.type / Notification.type
+// precedent for open-ended, additive taxonomies. Polymorphic `entityType`/
+// `entityId` reuses the existing EntityType enum and the already-accepted
+// "entityId is not a DB-enforced FK" trade-off (frozen DB doc §8).
+// ===========================================================================
+
+// §7.2.1 — single source of truth for "was this email attempted, and what happened."
+model EmailLog {
+  id                String       @id @default(uuid()) @db.Uuid
+  organizationId    String       @db.Uuid
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  toEmail           String
+  fromEmail         String
+  subject           String
+  templateType      String // "quote_sent" | "invoice_sent" | "payment_confirmation" | ...
+  relatedEntityType EntityType?
+  relatedEntityId   String?      @db.Uuid
+  status            String       @default("QUEUED") // QUEUED | SIMULATED | SENT | DELIVERED | BOUNCED | FAILED
+  providerMessageId String? // null under ConsoleEmailProvider
+  attempts          Int          @default(0)
+  lastError         String?
+  sentAt            DateTime?
+  createdAt         DateTime     @default(now())
+
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, relatedEntityType, relatedEntityId])
+}
+
+// §7.2.2 — polymorphic attachment. `url` is a pasted URL today, a Vercel Blob URL
+// tomorrow — identical column, zero migration. `entityType` null = org-level file.
+model FileAttachment {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  entityType     EntityType?
+  entityId       String?      @db.Uuid
+  url            String
+  fileName       String
+  mimeType       String?
+  sizeBytes      Int? // nullable — URL-paste mode often can't know this
+  category       String // PHOTO | BEFORE | AFTER | DOCUMENT | ATTACHMENT
+  uploadedById   String       @db.Uuid
+  uploadedBy     User         @relation(fields: [uploadedById], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, entityType, entityId])
+}
+
+// §7.2.3 — Public API key. Only the bcrypt `hashedKey` is stored; the full key is
+// shown once at creation and never persisted. `keyPrefix` enables an indexed
+// narrowing step before the bcrypt-compare loop (§21.6, §21.9).
+model ApiKey {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String // owner-given label, e.g. "Zapier integration"
+  keyPrefix      String // first chars shown in UI / used to narrow the bcrypt set
+  hashedKey      String // bcrypt hash of the full key — never store plaintext
+  scopes         String[] // e.g. ["leads:read", "quotes:write"] — §21.8 fixed list
+  lastUsedAt     DateTime?
+  isActive       Boolean      @default(true)
+  createdById    String       @db.Uuid
+  createdBy      User         @relation(fields: [createdById], references: [id])
+  createdAt      DateTime     @default(now())
+  revokedAt      DateTime?
+
+  @@index([organizationId, isActive])
+}
+
+// §7.2.4 — outbound webhook subscription. `secret` is an HMAC *signing* secret the
+// server needs back to sign each delivery (distinct from the auth tokens above,
+// which are one-way hashed); it is generated server-side and shown once.
+model Webhook {
+  id               String            @id @default(uuid()) @db.Uuid
+  organizationId   String            @db.Uuid
+  organization     Organization      @relation(fields: [organizationId], references: [id])
+  url              String
+  secret           String // HMAC signing secret, shown once at creation
+  subscribedEvents String[] // e.g. ["quote.accepted", "invoice.paid"]
+  isActive         Boolean           @default(true)
+  createdById      String            @db.Uuid
+  createdAt        DateTime          @default(now())
+  deliveries       WebhookDelivery[]
+
+  @@index([organizationId, isActive])
+}
+
+// §7.2.4 — per-attempt delivery record backing the retry policy.
+model WebhookDelivery {
+  id                 String    @id @default(uuid()) @db.Uuid
+  webhookId          String    @db.Uuid
+  webhook            Webhook   @relation(fields: [webhookId], references: [id])
+  eventType          String
+  payload            Json
+  status             String    @default("PENDING") // PENDING | SUCCESS | FAILED
+  responseStatusCode Int?
+  attempts           Int       @default(0)
+  lastAttemptAt      DateTime?
+  nextRetryAt        DateTime?
+  createdAt          DateTime  @default(now())
+
+  @@index([webhookId, status, nextRetryAt])
+}
+
+// §7.2.5 — automation rule. `conditions`/`actions` are JSON (open-ended, evaluated
+// by the engine in a later step). The (organizationId, triggerType, isActive)
+// index backs the hot trigger-lookup path (§15).
+model AutomationRule {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  name           String
+  triggerType    String // e.g. "quote.accepted", "invoice.overdue"
+  triggerEntity  EntityType?
+  conditions     Json // e.g. { field: "total", op: "gte", value: 5000 }
+  actions        Json // ordered array: [{ type: "send_notification", params: {...} }, ...]
+  isActive       Boolean         @default(true)
+  createdById    String          @db.Uuid
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  logs           AutomationLog[]
+
+  @@index([organizationId, triggerType, isActive])
+}
+
+// §7.2.5 — per-execution audit row for an automation rule.
+model AutomationLog {
+  id            String         @id @default(uuid()) @db.Uuid
+  ruleId        String         @db.Uuid
+  rule          AutomationRule @relation(fields: [ruleId], references: [id])
+  entityType    EntityType?
+  entityId      String?        @db.Uuid
+  status        String // SUCCESS | FAILED | SKIPPED
+  resultMessage String?
+  executedAt    DateTime       @default(now())
+
+  @@index([ruleId, executedAt])
+}
+
+// §7.2.6 — third-party integration connection record. `config` holds NON-SECRET
+// metadata only; real credentials never live here (§20.9 credential rule). One
+// connection per (organization, provider).
+model Integration {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  provider       String // "quickbooks" | "google_calendar" | "stripe" | ...
+  status         String       @default("NOT_CONNECTED") // NOT_CONNECTED | CONNECTED | ERROR
+  config         Json? // non-secret config only — see §20.9
+  connectedAt    DateTime?
+  lastSyncAt     DateTime?
+  createdById    String       @db.Uuid
+  createdAt      DateTime     @default(now())
+
+  @@unique([organizationId, provider])
+}
+
+// §7.2.7 — the Customer Portal's stored, revocable access token. Only the bcrypt
+// `tokenHash` is stored. Distinct from and coexisting with the frozen Phase 5
+// per-Quote HMAC share link (lib/tokens.ts), which is unchanged (§12.10).
+model PortalAccessToken {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  customerId     String       @db.Uuid
+  customer       Customer     @relation(fields: [customerId], references: [id])
+  tokenHash      String // bcrypt hash of the issued token — never store plaintext
+  label          String? // e.g. "Sent via text 6/28"
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+  createdById    String       @db.Uuid
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, customerId])
+}
+
+// §7.2.8 — AI cost/usage ledger. Written by NullAIProvider too (tokensUsed=0,
+// costEstimate=0) so cost reporting is correct from day one. `costEstimate` is a
+// Decimal (never Float), consistent with the frozen money discipline (§5).
+model AiUsageLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  feature        String // "quote_draft" | "email_draft" | "lead_priority" | ...
+  provider       String // "null" | "anthropic" | "openai"
+  tokensUsed     Int?
+  costEstimate   Decimal?     @db.Decimal(10, 4)
+  createdById    String       @db.Uuid
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
 }

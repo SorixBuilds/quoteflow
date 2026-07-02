@@ -57,9 +57,24 @@ export const PdfSchema = z.object({
 });
 
 export const EmailSchema = z.object({
-  // Placeholder templates only — no email is actually sent in V1 (Resend deferred).
+  // Legacy placeholder templates from Phase 4 (kept for backward compatibility —
+  // the Quote-sent subject is still honored by the quote_shared template as an
+  // optional override). The real template set lives in `features/email/templates`.
   quoteSentSubjectTemplate: z.string(),
   quoteSentBodyTemplate: z.string(),
+  // --- Phase 6B Step 5 (Email System, §11.9) — sender identity & branding ---
+  // The tenant's outbound identity, read by the Email Service to build the
+  // `from`/`reply-to` headers and the branded footer/signature. Every field is
+  // server-derived and never client-supplied (§11.9 closes header injection).
+  // `senderEmail`/`replyTo` are validated as email-or-empty so a tenant that has
+  // not configured a verified sender falls back to the platform default address.
+  senderName: z.string().trim().max(120).default(""),
+  senderEmail: z
+    .union([z.string().trim().email(), z.literal("")])
+    .default(""),
+  replyTo: z.union([z.string().trim().email(), z.literal("")]).default(""),
+  footer: z.string().max(500).default(""),
+  signature: z.string().max(500).default(""),
 });
 
 export const FeatureFlagsSchema = z.object({

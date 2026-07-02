@@ -1,11 +1,17 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
-import { PageContent, PageHeader, PageLayout } from "@/features/layout/components/PageLayout";
+import {
+  PageActions,
+  PageContent,
+  PageHeader,
+  PageLayout,
+} from "@/features/layout/components/PageLayout";
 import { EntityDetailTabs, parseDetailTab } from "@/components/shared/EntityDetailTabs";
 import { requireRole } from "@/lib/permissions";
 import { getInvoiceById } from "@/features/invoices/queries";
 import { InvoiceOverview } from "@/features/invoices/components/InvoiceOverview";
+import { DocumentDownloadLinks } from "@/features/documents/components/DocumentDownloadLinks";
 
 export const metadata: Metadata = { title: "Invoice" };
 
@@ -29,7 +35,17 @@ export default async function InvoiceDetailPage({
       <PageHeader
         title={invoice.invoiceNumber}
         breadcrumb={[{ label: "Invoices", href: "/invoices" }, invoice.invoiceNumber]}
-      />
+      >
+        <PageActions>
+          <DocumentDownloadLinks
+            entityId={invoice.id}
+            links={[
+              { type: "invoice", label: "Invoice PDF" },
+              { type: "receipt", label: "Receipt PDF" },
+            ]}
+          />
+        </PageActions>
+      </PageHeader>
       <PageContent>
         <EntityDetailTabs
           entityType="INVOICE"

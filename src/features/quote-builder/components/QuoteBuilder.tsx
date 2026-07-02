@@ -12,6 +12,8 @@ import { showErrorToast } from "@/components/shared/SuccessToast";
 import { SelectField, TextareaField } from "@/features/settings/components/fields";
 import { CustomerForm } from "@/features/customers/components/CustomerForm";
 import { createCustomer } from "@/features/customers/actions";
+import { AiSuggest } from "@/features/ai/components/AiSuggest";
+import { generateQuoteDraft } from "@/features/ai/actions";
 import { calculateQuoteTotal, type CalcLine } from "@/features/quotes/calculations";
 import { moneyToString } from "@/lib/money";
 import type { BuilderCatalog } from "@/features/catalog/cache";
@@ -42,6 +44,7 @@ export function QuoteBuilder({
   leadId,
   initial,
   onSave,
+  aiEnabled = false,
 }: {
   mode: "create" | "edit";
   catalog: BuilderCatalog;
@@ -50,6 +53,8 @@ export function QuoteBuilder({
   leadId?: string;
   initial?: Partial<BuilderState> & { lines?: BuilderLine[] };
   onSave: (payload: QuotePayload) => Promise<ActionResult<{ id: string }>>;
+  /** The org's `ai` flag (§16.5) — the suggest affordance renders only when true. */
+  aiEnabled?: boolean;
 }) {
   const router = useRouter();
   const [state, dispatch] = useReducer(builderReducer, initialBuilderState(initial));
@@ -385,6 +390,20 @@ export function QuoteBuilder({
           value={state.notes}
           onChange={(v) => dispatch({ type: "setField", field: "notes", value: v })}
         />
+        {leadId ? (
+          <AiSuggest
+            enabled={aiEnabled}
+            label="Suggest notes with AI"
+            request={() => generateQuoteDraft(leadId)}
+            onAccept={(text) =>
+              dispatch({
+                type: "setField",
+                field: "notes",
+                value: state.notes.trim() === "" ? text : `${state.notes}\n\n${text}`,
+              })
+            }
+          />
+        ) : null}
         <TextareaField
           id="qb-terms"
           label="Terms"

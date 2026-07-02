@@ -2,17 +2,19 @@
 
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
-import type { DiscountType, QuoteStatus } from "@prisma/client";
+import type { QuoteStatus } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { requireActiveUser, requireCompanyScope, requireRole } from "@/lib/permissions";
-import { getCompanyConfig } from "@/lib/config/service";
+import { emitEvent } from "@/lib/events";
 import { getNextQuoteNumber } from "@/lib/numbering";
-import { moneyToString, toDecimal } from "@/lib/money";
+import { toDecimal } from "@/lib/money";
 import { canTransitionQuote, QUOTE_STATUS_LABELS } from "@/lib/status";
 import { logActivity } from "@/features/activity/actions";
-import { calculateQuoteTotal, type CalcLine } from "@/features/quotes/calculations";
+import { notifyQuoteShared, notifyQuoteDecision } from "@/features/email/dispatch";
+import { calculateQuoteTotal } from "@/features/quotes/calculations";
 import { quotePayloadSchema, type QuotePayload } from "@/features/quotes/schema";
+import { createQuoteCore, parseDiscount, resolveLines } from "@/features/quotes/service";
 import { BusinessRuleError, STALE_TRANSITION_MESSAGE, toActionError } from "@/lib/errors";
 import type { ActionResult } from "@/types";
 
@@ -23,70 +25,9 @@ import type { ActionResult } from "@/types";
  * the Job and flips the linked Lead to WON (§20, §35 rule #5).
  */
 
-type ResolvedLine = {
-  serviceId: string | null;
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  taxRateId: string | null;
-  taxRatePercent: string | null;
-};
-
-/** Validate item references and resolve each line's effective tax rate (§17). */
-async function resolveLines(
-  organizationId: string,
-  items: QuotePayload["items"],
-): Promise<{ lines: ResolvedLine[]; calcLines: CalcLine[] }> {
-  const [taxRates, services] = await Promise.all([
-    db.taxRate.findMany({
-      where: { organizationId },
-      select: { id: true, rate: true, isDefault: true },
-    }),
-    db.service.findMany({ where: { organizationId }, select: { id: true } }),
-  ]);
-  const rateById = new Map(taxRates.map((t) => [t.id, t.rate]));
-  const defaultRate = taxRates.find((t) => t.isDefault)?.rate ?? null;
-  const serviceIds = new Set(services.map((s) => s.id));
-
-  const lines: ResolvedLine[] = items.map((item) => {
-    const serviceId = item.serviceId ? String(item.serviceId) : null;
-    const taxRateId = item.taxRateId ? String(item.taxRateId) : null;
-    if (serviceId && !serviceIds.has(serviceId)) {
-      throw new BusinessRuleError("A selected service is no longer available.");
-    }
-    if (taxRateId && !rateById.has(taxRateId)) {
-      throw new BusinessRuleError("A selected tax rate is no longer available.");
-    }
-    const rate = taxRateId ? rateById.get(taxRateId)! : defaultRate;
-    return {
-      serviceId,
-      description: item.description,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      taxRateId,
-      taxRatePercent: rate ? moneyToString(rate) : null,
-    };
-  });
-
-  const calcLines: CalcLine[] = lines.map((l) => ({
-    quantity: l.quantity,
-    unitPrice: l.unitPrice,
-    taxRatePercent: l.taxRatePercent,
-  }));
-
-  return { lines, calcLines };
-}
-
-function parseDiscount(
-  data: { discountType?: unknown; discountValue?: unknown },
-): { type: DiscountType; value: string } | null {
-  const type = data.discountType ? String(data.discountType) : "";
-  const value = data.discountValue ? String(data.discountValue) : "";
-  if ((type === "PERCENT" || type === "FIXED") && value) {
-    return { type, value };
-  }
-  return null;
-}
+// `resolveLines`/`parseDiscount` and the create flow moved to `service.ts`
+// (Phase 6B Step 8, §21.6) so the Public API shares them; `updateQuote` below
+// keeps using the same shared helpers.
 
 export async function createQuote(
   input: QuotePayload,
@@ -97,74 +38,10 @@ export async function createQuote(
     const { organizationId } = await requireCompanyScope(session);
     const data = quotePayloadSchema.parse(input);
 
-    // Customer must belong to the org (tenant isolation).
-    const customer = await db.customer.findFirst({
-      where: { id: data.customerId, organizationId },
-      select: { id: true },
-    });
-    if (!customer) throw new BusinessRuleError("That customer could not be found.");
-
-    const { lines, calcLines } = await resolveLines(organizationId, data.items);
-    const discount = parseDiscount(data);
-    const calc = calculateQuoteTotal(calcLines, discount);
-    const config = await getCompanyConfig(organizationId);
-    const quoteNumber = await getNextQuoteNumber(organizationId);
-    const leadId = data.leadId ? String(data.leadId) : null;
-
-    const quote = await db.$transaction(async (tx) => {
-      const created = await tx.quote.create({
-        data: {
-          organizationId,
-          quoteNumber,
-          leadId,
-          customerId: data.customerId,
-          status: "DRAFT",
-          version: 1,
-          discountType: discount?.type ?? null,
-          discountValue: discount ? toDecimal(discount.value) : null,
-          subtotal: calc.subtotal,
-          taxAmount: calc.taxAmount,
-          total: calc.total,
-          currency: config.locale.currency,
-          issueDate: data.issueDate ? new Date(data.issueDate) : null,
-          expiryDate: data.expiryDate ? new Date(data.expiryDate) : null,
-          notes: data.notes ? data.notes : null,
-          terms: data.terms ? data.terms : null,
-          createdById: session.id,
-          assignedToId: session.id,
-          items: {
-            create: lines.map((line, i) => ({
-              organizationId,
-              serviceId: line.serviceId,
-              description: line.description,
-              quantity: toDecimal(line.quantity),
-              unitPrice: toDecimal(line.unitPrice),
-              lineTotal: calc.lineTotals[i],
-              taxRateId: line.taxRateId,
-              sortOrder: i,
-            })),
-          },
-        },
-        select: { id: true },
-      });
-
-      // Backfill the Lead's customer link on first quote (§14 conversion).
-      if (leadId) {
-        await tx.lead.updateMany({
-          where: { id: leadId, organizationId, customerId: null },
-          data: { customerId: data.customerId },
-        });
-      }
-      return created;
-    });
-
-    await logActivity({
-      organizationId,
-      entityType: "QUOTE",
-      entityId: quote.id,
-      type: "created",
-      createdById: session.id,
-    });
+    // Business core shared verbatim with POST /api/v1/quotes (§21.6, §21.12):
+    // reference checks, server-side totals, numbering, transaction, Activity,
+    // and the `quote.created` event all live in the core.
+    const quote = await createQuoteCore({ organizationId, actorId: session.id }, data);
 
     revalidatePath("/quotes");
     return { success: true, data: { id: quote.id } };
@@ -374,6 +251,10 @@ export async function sendQuote(id: string): Promise<ActionResult<{ status: Quot
       createdById: session.id,
     });
 
+    // Additive, non-fatal: email the customer the quote + PDF (§5). Never throws.
+    await notifyQuoteShared(organizationId, id);
+    emitEvent("quote.sent", { organizationId, quoteId: id });
+
     revalidatePath(`/quotes/${id}`);
     revalidatePath("/quotes");
     return { success: true, data: { status: "SENT" } };
@@ -475,6 +356,10 @@ export async function acceptQuote(
       actionLabel: "View quote",
     });
 
+    // Customer-facing acceptance confirmation (§5). Non-fatal.
+    await notifyQuoteDecision(organizationId, id, "accepted");
+    emitEvent("quote.accepted", { organizationId, quoteId: id });
+
     revalidatePath(`/quotes/${id}`);
     revalidatePath("/quotes");
     revalidatePath("/jobs");
@@ -533,6 +418,10 @@ export async function declineQuote(
       actionUrl: `/quotes/${id}`,
       actionLabel: "View quote",
     });
+
+    // Customer-facing decline confirmation (§5). Non-fatal.
+    await notifyQuoteDecision(organizationId, id, "declined");
+    emitEvent("quote.declined", { organizationId, quoteId: id });
 
     revalidatePath(`/quotes/${id}`);
     revalidatePath("/quotes");

@@ -23,6 +23,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // `server-only` is a Next build-time marker with no Vite-resolvable entry;
+      // map it to an empty stub so server modules can be unit-tested (§ test infra).
+      "server-only": fileURLToPath(new URL("./src/test/server-only-stub.ts", import.meta.url)),
     },
   },
 });

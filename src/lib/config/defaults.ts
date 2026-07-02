@@ -43,6 +43,13 @@ export const DEFAULT_COMPANY_CONFIG: CompanyConfig = {
   email: {
     quoteSentSubjectTemplate: "Your quote from {{companyName}}",
     quoteSentBodyTemplate: "",
+    // Empty sender identity = fall back to the platform default `from` address
+    // (`getOrgFromAddress`). A tenant sets these once a verified domain exists.
+    senderName: "",
+    senderEmail: "",
+    replyTo: "",
+    footer: "",
+    signature: "",
   },
   featureFlags: {
     ai: false,
